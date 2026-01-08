@@ -176,7 +176,15 @@
 
         function initFirebase() {
             try {
-                const firebaseConfig = JSON.parse(__firebase_config);
+               const firebaseConfig = {
+            apiKey: "AIzaSyCUVjOqN2YuYZQjkPo5QICe8juJb0RrvuU",
+            authDomain: "my-stock-manager-8546c.firebaseapp.com",
+            projectId: "my-stock-manager-8546c",
+            storageBucket: "my-stock-manager-8546c.firebasestorage.app",
+            messagingSenderId: "742351805566",
+            appId: "1:742351805566:web:b82ff50e4b78c63c210c2f",
+            measurementId: "G-WRHJ5JLHTG"
+                };
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
                 auth = firebase.auth();
