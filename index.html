@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雲端同步台股管理系統 - 專業清爽版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .up-color { color: #ef4444; } 
+        .down-color { color: #22c55e; }
+        .bg-up-light { background-color: #fef2f2; }
+        .bg-down-light { background-color: #f0fdf4; }
+        .alert-pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+        
+        #linkPanel { transition: all 0.3s ease; max-height: 0; overflow: hidden; opacity: 0; }
+        #linkPanel.open { max-height: 500px; opacity: 1; margin-top: 0.5rem; overflow: visible; }
+        
+        .target-tag { font-size: 10px; padding: 2px 5px; border-radius: 4px; border: 1px solid transparent; white-space: nowrap; }
+        .target-reached { background-color: #ef4444; color: white; border-color: #ef4444; font-weight: bold; }
+        .target-pending { border-color: #e2e8f0; color: #94a3b8; }
+        .buy-point-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid #dbeafe; background-color: #eff6ff; color: #1e40af; font-weight: bold; white-space: nowrap; }
+        .buy-zone-active { background-color: #2563eb; color: white; border-color: #2563eb; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        .id-text-container { word-break: break-all; overflow-wrap: break-word; white-space: normal !important; }
+    </style>
+</head>
+<body class="bg-[#fcfdfe] min-h-screen pb-20 text-slate-600">
+
+    <div class="max-w-6xl mx-auto px-4 py-4 md:py-6">
+        <!-- 頂部導覽 -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-3 gap-3">
+            <div class="flex flex-col md:flex-row md:items-baseline gap-2 md:gap-4">
+                <h1 class="text-xl font-light text-slate-800 tracking-tight">
+                    台股<span class="font-bold">策略管理</span>
+                </h1>
+                <div class="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                    <span id="syncStatus" class="font-medium">系統就緒</span>
+                    <span class="text-slate-200">|</span>
+                    <button onclick="toggleLinkPanel()" class="text-blue-500 font-bold hover:underline">連結裝置</button>
+                    <button id="resetBtn" onclick="resetToSelf()" class="hidden text-slate-300">重設</button>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-1.5 bg-slate-50 p-1 rounded-lg border border-slate-100 text-[10px]">
+                <input type="password" id="apiToken" placeholder="FinMind Token" class="border-none focus:ring-0 w-32 md:w-40 p-1 outline-none bg-transparent">
+                <button id="saveBtn" onclick="saveToken()" class="bg-white text-slate-800 px-3 py-1 rounded-md font-bold shadow-sm border border-slate-100 transition-colors hover:bg-slate-50">儲存</button>
+            </div>
+        </header>
+
+        <!-- 同步 ID 顯示區 -->
+        <div onclick="copyMyID()" class="mb-4 cursor-pointer bg-slate-50/50 border border-slate-100 p-3 rounded-xl hover:border-blue-200 transition-all w-full">
+            <p class="text-[9px] uppercase tracking-widest text-slate-300 font-bold mb-1">目前同步 ID (點擊複製完整字串)</p>
+            <div id="displayUserId" class="id-text-container text-[11px] font-mono text-slate-500 leading-relaxed">載入中...</div>
+        </div>
+
+        <!-- 連結面板 -->
+        <div id="linkPanel" class="bg-blue-50/30 p-4 rounded-xl border border-blue-100 mb-4 shadow-sm">
+            <div class="flex flex-col gap-3">
+                <p class="text-[10px] font-bold text-slate-500">輸入要連結的 ID：</p>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input type="text" id="targetIdInput" placeholder="在此貼上長 ID 字串..." class="flex-1 text-[12px] p-3 rounded-xl border-slate-200 border outline-none bg-white focus:ring-2 focus:ring-blue-100">
+                    <button onclick="confirmSwitchID()" class="bg-slate-800 text-white px-6 py-3 rounded-xl text-[11px] font-bold whitespace-nowrap hover:bg-black transition">確認並同步</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 資產儀表板 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div class="bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100">
+                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-0.5">總市值</p>
+                <h2 id="totalMarketValue" class="text-lg font-light text-slate-800 tracking-tight">$0</h2>
+            </div>
+            <div class="bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100">
+                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-0.5">成本</p>
+                <h2 id="totalCost" class="text-lg font-light text-slate-800 tracking-tight">$0</h2>
+            </div>
+            <div id="profitCard" class="bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100 transition-all">
+                <p class="text-[9px] font-bold text-slate-300 uppercase tracking-widest mb-0.5">市場損益</p>
+                <div class="flex items-center gap-2">
+                    <h2 id="totalProfit" class="text-lg font-bold tracking-tight">$0</h2>
+                    <span id="totalProfitRate" class="text-[10px] font-bold bg-white/60 px-1.5 py-0.5 rounded-md">0.00%</span>
+                    <span id="profitIcon" class="text-sm"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 持股管理中心：一條式長條工具列 -->
+        <div class="bg-white p-2 rounded-2xl shadow-sm border border-slate-200 mb-4" id="inputSection">
+            <div class="flex flex-col lg:flex-row items-center gap-2">
+                <div class="flex items-center gap-2 px-2">
+                    <span class="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                    <span id="inputTitle" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">管理</span>
+                </div>
+                <div class="flex flex-1 flex-wrap lg:flex-nowrap gap-2 w-full">
+                    <input type="text" id="symbol" placeholder="代號" class="flex-1 min-w-[70px] border border-slate-100 rounded-xl px-3 py-2 bg-slate-50 text-[13px] font-bold outline-none focus:ring-2 focus:ring-blue-50 transition-all">
+                    <input type="number" id="buyPrice" placeholder="均價" class="flex-1 min-w-[80px] border border-slate-100 rounded-xl px-3 py-2 bg-slate-50 text-[13px] outline-none">
+                    <input type="number" id="shares" placeholder="股數" class="flex-1 min-w-[80px] border border-slate-100 rounded-xl px-3 py-2 bg-slate-50 text-[13px] outline-none">
+                    <input type="number" id="stopLoss" placeholder="止損" class="flex-1 min-w-[80px] border border-slate-100 rounded-xl px-3 py-2 bg-slate-50 text-[13px] outline-none">
+                    <div class="flex gap-1.5 w-full lg:w-auto">
+                        <button id="mainActionBtn" onclick="handleMainAction()" class="flex-1 lg:px-6 bg-slate-800 text-white font-bold rounded-xl py-2 text-xs hover:bg-black transition whitespace-nowrap">加入持股</button>
+                        <button id="cancelEditBtn" onclick="cancelEdit()" class="hidden bg-slate-100 text-slate-500 font-bold rounded-xl px-4 text-xs">取消</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 數據表格區 -->
+        <div class="bg-white rounded-2xl shadow-xl shadow-slate-200/20 border border-slate-100 overflow-hidden">
+            <div class="overflow-x-auto no-scrollbar">
+                <table class="w-full text-left min-w-[850px] border-collapse">
+                    <thead class="bg-slate-50/80 text-slate-400 text-[9px] uppercase tracking-widest font-bold border-b border-slate-100">
+                        <tr>
+                            <th class="p-4 pl-6">標的</th>
+                            <th class="p-4">現價 / 成本</th>
+                            <th class="p-4 text-blue-400">回檔建議 (加碼)</th>
+                            <th class="p-4">長線獲利目標</th>
+                            <th class="p-4">市場損益</th>
+                            <th class="p-4 text-center">狀態</th>
+                            <th class="p-4 text-right pr-6">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stockList" class="divide-y divide-slate-50 text-[13px] italic text-slate-300">
+                        <tr><td colspan="7" class="p-16 text-center font-medium uppercase text-[10px] tracking-widest">正在載入雲端資產...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 同步按鈕 -->
+        <button onclick="syncPrices()" id="syncBtn" class="w-full mt-5 bg-slate-800 text-white py-4 rounded-2xl font-bold text-sm shadow-xl shadow-slate-200 hover:bg-black transition-all active:scale-[0.98] flex items-center justify-center gap-3 tracking-widest">
+            <span>⚡️</span> 同步即時行情
+        </button>
+
+        <!-- 恢復顯示策略指引說明 -->
+        <div class="mt-8 p-6 bg-slate-50/50 rounded-2xl border border-slate-100 text-[10px] text-slate-400 leading-relaxed">
+            <p class="font-bold text-slate-600 mb-3 tracking-widest uppercase">策略操作說明 (Strategy Guide)</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <ul class="space-y-2">
+                    <li><b class="text-blue-500 font-bold underline">加碼建議：</b> 以歷史高點回落約 10% 左右作為觀察區。現價進入此區間時，標籤會自動轉為藍色，適合進行長線分批加碼或定期定額。</li>
+                    <li><b class="text-slate-500 font-bold underline">跨裝置連結：</b> 每個瀏覽器都有獨立 ID，若要在手機看電腦的資料，請在手機點擊「連結裝置」並貼上電腦版 ID。</li>
+                </ul>
+                <ul class="space-y-2">
+                    <li><b class="text-rose-400 font-bold underline">長線獲利目標：</b> 以買入價為基準顯示階梯目標 (+30%、+50%、+100%)。達標標籤會自動變紅，提醒您可分批回收本金。</li>
+                    <li><b class="text-slate-500 font-bold underline">資料保存：</b> 所有的持股異動都會即時同步至雲端資料庫，確保您的策略數據在多台設備間保持一致。</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 錯誤訊息提示 -->
+        <div id="errorMessage" class="hidden fixed bottom-4 right-4 p-4 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-xl shadow-lg z-50">
+            <span id="errorText"></span>
+            <button onclick="hideError()" class="ml-4 font-bold">✕</button>
+        </div>
+    </div>
+
+    <script>
+        let db, auth, unsubscribe;
+        let selfUserId = null;
+        let activeUserId = localStorage.getItem('linked_user_id');
+        let stocks = [];
+        let editingStockId = null;
+        let apiToken = localStorage.getItem('fm_token') || '';
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'stock-sync-app';
+
+        window.onload = function() {
+            document.getElementById('apiToken').value = apiToken;
+            initFirebase();
+        };
+
+        function initFirebase() {
+            try {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+                initAuth();
+            } catch (e) { document.getElementById('syncStatus').innerText = "❌ Firebase 連線錯誤"; }
+        }
+
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await auth.signInAnonymously();
+                }
+                auth.onAuthStateChanged(user => {
+                    if (user) {
+                        selfUserId = user.uid;
+                        if (!activeUserId) activeUserId = selfUserId;
+                        updateUI();
+                        bindFirestore();
+                    }
+                });
+            } catch (error) { document.getElementById('syncStatus').innerText = "❌ 授權失敗"; }
+        }
+
+        function updateUI() {
+            const displayEl = document.getElementById('displayUserId');
+            const resetBtn = document.getElementById('resetBtn');
+            const statusEl = document.getElementById('syncStatus');
+            displayEl.innerText = activeUserId;
+            if (activeUserId !== selfUserId) {
+                statusEl.innerHTML = '<span class="w-1.5 h-1.5 bg-blue-400 rounded-full inline-block"></span> 已同步雲端帳戶';
+                resetBtn.classList.remove('hidden');
+            } else {
+                statusEl.innerHTML = '<span class="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block"></span> 本機同步中';
+                resetBtn.classList.add('hidden');
+            }
+        }
+
+        function bindFirestore() {
+            if (!activeUserId || !db) return;
+            if (unsubscribe) unsubscribe();
+            const collectionPath = `artifacts/${appId}/users/${activeUserId}/stocks`;
+            unsubscribe = db.collection(collectionPath).onSnapshot(snapshot => {
+                stocks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                render();
+            }, error => { showError("讀取失敗，ID 可能不正確。"); });
+        }
+
+        function handleMainAction() {
+            if (editingStockId) updateStock(); else addStock();
+        }
+
+        function startEdit(id) {
+            const stock = stocks.find(s => s.id === id);
+            if (!stock) return;
+            editingStockId = id;
+            document.getElementById('symbol').value = stock.symbol;
+            document.getElementById('buyPrice').value = stock.buyPrice;
+            document.getElementById('shares').value = stock.shares;
+            document.getElementById('stopLoss').value = stock.stopLoss;
+            document.getElementById('inputTitle').innerText = "編輯模式";
+            document.getElementById('mainActionBtn').innerText = "確認更新";
+            document.getElementById('mainActionBtn').className = "flex-1 lg:px-6 bg-amber-500 text-white font-bold rounded-xl py-2 text-xs";
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+            document.getElementById('symbol').disabled = true;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function cancelEdit() {
+            editingStockId = null;
+            document.getElementById('inputTitle').innerText = "管理";
+            document.getElementById('mainActionBtn').innerText = "加入持股";
+            document.getElementById('mainActionBtn').className = "flex-1 lg:px-6 bg-slate-800 text-white font-bold rounded-xl py-2 text-xs hover:bg-black transition whitespace-nowrap";
+            document.getElementById('cancelEditBtn').classList.add('hidden');
+            document.getElementById('symbol').disabled = false;
+            ['symbol', 'buyPrice', 'shares', 'stopLoss'].forEach(id => document.getElementById(id).value = '');
+        }
+
+        async function updateStock() {
+            const buyPrice = parseFloat(document.getElementById('buyPrice').value);
+            const shares = parseInt(document.getElementById('shares').value);
+            const stopLoss = parseFloat(document.getElementById('stopLoss').value);
+            try {
+                await db.collection(`artifacts/${appId}/users/${activeUserId}/stocks`).doc(editingStockId).update({ buyPrice, shares, stopLoss, updatedAt: Date.now() });
+                cancelEdit();
+            } catch (e) { alert("更新失敗"); }
+        }
+
+        async function addStock() {
+            const symbol = document.getElementById('symbol').value.trim();
+            const buyPrice = parseFloat(document.getElementById('buyPrice').value);
+            const shares = parseInt(document.getElementById('shares').value) || 1000;
+            const stopLoss = parseFloat(document.getElementById('stopLoss').value) || buyPrice * 0.93;
+            if (!symbol || isNaN(buyPrice)) return alert("代號與買價不完整");
+            try {
+                await db.collection(`artifacts/${appId}/users/${activeUserId}/stocks`).add({ symbol, buyPrice, shares, stopLoss, currentPrice: buyPrice, highPrice: buyPrice, updatedAt: Date.now() });
+                cancelEdit();
+            } catch (e) { alert("新增失敗"); }
+        }
+
+        async function syncPrices() {
+            if (!apiToken) return alert("請先儲存 Token");
+            if (stocks.length === 0) return alert("清單中無標的");
+            const btn = document.getElementById('syncBtn');
+            btn.disabled = true;
+            btn.innerText = "🔍 正在查詢市場報價中...";
+            const lastWeek = new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0];
+            for (let s of stocks) {
+                try {
+                    const originalUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${s.symbol}&token=${apiToken}&start_date=${lastWeek}`;
+                    let result;
+                    try { result = await (await fetch(`https://corsproxy.io/?${encodeURIComponent(originalUrl)}`)).json(); }
+                    catch (err) { result = JSON.parse((await (await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(originalUrl)}`)).json()).contents); }
+                    if (result && result.status === 200 && result.data.length > 0) {
+                        const latest = result.data[result.data.length - 1];
+                        await db.collection(`artifacts/${appId}/users/${activeUserId}/stocks`).doc(s.id).update({ currentPrice: latest.close, highPrice: Math.max(s.highPrice || 0, latest.close), updatedAt: Date.now() });
+                    }
+                } catch (e) { console.error(e); }
+            }
+            btn.disabled = false; btn.innerText = "⚡️ 同步即時行情";
+        }
+
+        function render() {
+            const list = document.getElementById('stockList');
+            list.innerHTML = '';
+            let tCost = 0, tMarket = 0;
+            if (stocks.length === 0) {
+                list.innerHTML = `<tr><td colspan="7" class="p-16 text-center text-slate-300 font-medium uppercase text-[10px] tracking-widest">No Stock Records</td></tr>`;
+                updateDashboard(0, 0); return;
+            }
+            stocks.forEach(s => {
+                const cost = (s.buyPrice || 0) * (s.shares || 0);
+                const mkt = (s.currentPrice || 0) * (s.shares || 0);
+                const profit = mkt - cost;
+                const rate = cost > 0 ? ((profit / cost) * 100).toFixed(2) : 0;
+                tCost += cost; tMarket += mkt;
+
+                const buyPointMin = (s.highPrice * 0.88).toFixed(1);
+                const buyPointMax = (s.highPrice * 0.92).toFixed(1);
+                const isBuyZone = s.currentPrice <= buyPointMax && s.currentPrice >= buyPointMin;
+
+                const t30 = (s.buyPrice * 1.3).toFixed(1);
+                const t50 = (s.buyPrice * 1.5).toFixed(1);
+                const t100 = (s.buyPrice * 2.0).toFixed(1);
+
+                let statusHtml = '<span class="text-slate-300 font-medium italic text-[10px]">監測中</span>';
+                if (s.currentPrice <= s.stopLoss) statusHtml = '<span class="bg-red-500 text-white px-2 py-0.5 rounded text-[9px] alert-pulse font-bold">🚨 停損</span>';
+                else if (isBuyZone) statusHtml = '<span class="bg-blue-600 text-white px-2 py-0.5 rounded text-[9px] font-bold">🔵 加碼</span>';
+                else if (s.currentPrice >= t100) statusHtml = '<span class="bg-purple-600 text-white px-2 py-0.5 rounded text-[9px] font-bold">🚀 翻倍</span>';
+
+                list.innerHTML += `
+                    <tr class="hover:bg-slate-50/50 transition border-b border-slate-50">
+                        <td class="p-4 pl-6">
+                            <div class="font-bold text-slate-800 text-base tracking-tight">${s.symbol}</div>
+                        </td>
+                        <td class="p-4">
+                            <div class="text-blue-600 font-bold">$${s.currentPrice}</div>
+                            <div class="text-[9px] text-slate-400">成本: ${s.buyPrice} (${s.shares}股)</div>
+                        </td>
+                        <td class="p-4">
+                            <div class="buy-point-tag ${isBuyZone ? 'buy-zone-active shadow-sm shadow-blue-50' : ''}">${buyPointMin} ~ ${buyPointMax}</div>
+                        </td>
+                        <td class="p-4">
+                            <div class="flex flex-wrap gap-1">
+                                <span class="target-tag ${s.currentPrice >= t30 ? 'target-reached shadow-sm shadow-red-50' : 'target-pending'}">30%:${t30}</span>
+                                <span class="target-tag ${s.currentPrice >= t50 ? 'target-reached shadow-sm shadow-red-50' : 'target-pending'}">50%:${t50}</span>
+                                <span class="target-tag ${s.currentPrice >= t100 ? 'target-reached shadow-sm shadow-red-50' : 'target-pending'}">翻倍:${t100}</span>
+                            </div>
+                        </td>
+                        <td class="p-4 font-bold ${profit >= 0 ? 'up-color' : 'down-color'}">
+                            ${profit >= 0 ? '+' : ''}${profit.toLocaleString()}<br>${rate}%
+                        </td>
+                        <td class="p-4 text-center">${statusHtml}</td>
+                        <td class="p-4 text-right pr-6">
+                            <div class="flex gap-4 justify-end">
+                                <button onclick="startEdit('${s.id}')" class="text-slate-300 hover:text-blue-500 text-xs transition-colors underline">編輯</button>
+                                <button onclick="deleteStock('${s.id}')" class="text-slate-100 hover:text-red-400 text-xl transition-colors font-medium">✕</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+            updateDashboard(tCost, tMarket);
+        }
+
+        function updateDashboard(tCost, tMarket) {
+            const tProfit = tMarket - tCost;
+            const tRate = tCost > 0 ? (tProfit / tCost * 100).toFixed(2) : 0;
+            document.getElementById('totalMarketValue').innerText = `$${tMarket.toLocaleString()}`;
+            document.getElementById('totalCost').innerText = `$${tCost.toLocaleString()}`;
+            const profitEl = document.getElementById('totalProfit');
+            const rateEl = document.getElementById('totalProfitRate');
+            const cardEl = document.getElementById('profitCard');
+            const iconEl = document.getElementById('profitIcon');
+            profitEl.innerText = `${tProfit >= 0 ? '+' : ''}$${tProfit.toLocaleString()}`;
+            rateEl.innerText = `${tProfit >= 0 ? '▲' : '▼'} ${Math.abs(tRate)}%`;
+            if (tProfit >= 0) {
+                profitEl.className = "text-xl font-bold up-color";
+                rateEl.className = "text-[10px] font-bold up-color";
+                cardEl.className = "bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100 bg-up-light";
+                iconEl.innerText = "🚀";
+            } else {
+                profitEl.className = "text-xl font-bold down-color";
+                rateEl.className = "text-[10px] font-bold down-color";
+                cardEl.className = "bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100 bg-down-light";
+                iconEl.innerText = "📉";
+            }
+        }
+
+        function saveToken() {
+            const val = document.getElementById('apiToken').value.trim();
+            if(!val) return alert("請貼入 Token");
+            apiToken = val; localStorage.setItem('fm_token', apiToken);
+            document.getElementById('saveBtn').innerText = "已存 ✓";
+            setTimeout(() => { document.getElementById('saveBtn').innerText = "儲存"; }, 2000);
+        }
+
+        function toggleLinkPanel() { document.getElementById('linkPanel').classList.toggle('open'); }
+        function confirmSwitchID() {
+            const val = document.getElementById('targetIdInput').value.trim();
+            if (val && val.length > 10) { activeUserId = val; localStorage.setItem('linked_user_id', activeUserId); updateUI(); bindFirestore(); toggleLinkPanel(); alert("連結成功！"); }
+            else { alert("ID 格式不正確"); }
+        }
+        function resetToSelf() { activeUserId = selfUserId; localStorage.removeItem('linked_user_id'); updateUI(); bindFirestore(); }
+        function copyMyID() { 
+            const temp = document.createElement('input'); document.body.appendChild(temp); 
+            temp.value = activeUserId || selfUserId;
+            temp.select(); document.execCommand('copy'); document.body.removeChild(temp); alert("同步 ID 已複製！"); 
+        }
+        async function deleteStock(stockId) { if (confirm("確定刪除此持股？")) await db.collection(`artifacts/${appId}/users/${activeUserId}/stocks`).doc(stockId).delete(); }
+        function showError(msg) { 
+            const errBox = document.getElementById('errorMessage');
+            document.getElementById('errorText').innerText = msg;
+            errBox.classList.remove('hidden');
+            setTimeout(hideError, 5000);
+        }
+        function hideError() { document.getElementById('errorMessage').classList.add('hidden'); }
+    </script>
+</body>
+</html>
